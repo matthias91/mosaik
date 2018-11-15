@@ -1,4 +1,5 @@
 import os
+import sys
 from functools import partial
 
 import numpy as np
@@ -8,10 +9,10 @@ from multiprocessing import Pool
 import argparse
 from util import *
 
+
 def create_mosaic(args):
 
-
-    final_img = load_image_to_rgb(args.big_image_path)
+    final_img = load_image_to_rgb(args.input_image_path)
     height, width = final_img.shape[:2]
     rows = int(height / args.mosaic_size)
     columns = int(width / args.mosaic_size)
@@ -19,47 +20,44 @@ def create_mosaic(args):
     # Crop image TODO center crop
     final_img = final_img[0: rows * args.mosaic_size, 0:columns * args.mosaic_size]
 
+    print("Start loading the image pool")
+
     # create small mosaics
     mosaics = []
     # TODO multiprocessing
-    #with Pool(4) as p:
-        #mosaics.append(p.map(partial(image_to_mosaic, size=100), get_all_iamge_paths("/home/test/Desktop/")))
+    # for path in get_all_iamge_paths(args.image_pool):
+    #   img = image_to_mosaic(path, args.mosaic_size)
+    with Pool(args.threads) as p:
+        for img in p.imap(partial(image_to_mosaic, size=args.mosaic_size), get_all_iamge_paths(args.image_pool)):
+            c = calc_image_dominant_color(img)
+            mosaics.append((img, c))
 
-    for path in get_all_iamge_paths(args.image_pool):
-        img = image_to_mosaic(path, args.mosaic_size)
-        average_color = calc_image_color_mean(img)
-        # show_image(img)
-        mosaics.append((img, average_color))
-
+    print("Loaded image pool")
 
     # Create mosaic
     for h in range(rows):
+        sys.stdout.write("\r%i/%i rows processed" % (h, rows))
         for w in range(columns):
-            #print("area", h * args.mosaic_size, h * args.mosaic_size + args.mosaic_size,
-                   # w * args.mosaic_size, w * args.mosaic_size + args.mosaic_size)
             current_area = final_img[h * args.mosaic_size: h * args.mosaic_size + args.mosaic_size,
-                    w * args.mosaic_size: w * args.mosaic_size + args.mosaic_size]
-            color = calc_image_color_mean(current_area)
-            found_mosaik = find_nearest_mosaic(mosaics, color)
+                           w * args.mosaic_size: w * args.mosaic_size + args.mosaic_size]
+            found_mosaik = find_best_matching_mosaic(mosaics, current_area)
 
             final_img[h * args.mosaic_size: h * args.mosaic_size + args.mosaic_size,
             w * args.mosaic_size: w * args.mosaic_size + args.mosaic_size] = found_mosaik
 
-    #save_image("/home/test/Desktop/r.jpg", final_img)
+    #plot_3d_data(data_pool, data_img)
     show_image(final_img)
+    save_image(args.output_image_path, final_img)
 
-def find_nearest_mosaic(mosaics, color):
-    color_mean = np.mean(color)
 
-    # TODO
-    #result = mosaics[0][0]
+def find_best_matching_mosaic(mosaics, current_area):
     result = None
-    min_diff = 255
+    min = 3*256
+    c = calc_image_dominant_color(current_area)
     for m in mosaics:
-        mosaics_color_mean = np.mean(m[1])
-        diff = abs(mosaics_color_mean - color_mean)
-        if diff < min_diff:
-            min_diff = diff
+        x = np.sum(abs(m[1] - c))
+        if x < min:
+            min = x
             result = m[0]
     return result
 
@@ -86,36 +84,14 @@ def image_to_mosaic(image_path, size):
     return resized_image
 
 
-def calc_image_color_mean(img):
-    return calc_image_color_mean_impl2(img)
-
-
-def calc_image_color_mean_impl1(img):
-    average = img.mean(axis=0).mean(axis=0)
-    return average
-
-
-def calc_image_color_mean_impl2(img):
-    #print(img.shape)
-    pixels = np.float32(img.reshape(-1, 3))
-
-    n_colors = 5
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 200, .1)
-    flags = cv2.KMEANS_RANDOM_CENTERS
-
-    _, labels, palette = cv2.kmeans(pixels, n_colors, None, criteria, 10, flags)
-    _, counts = np.unique(labels, return_counts=True)
-
-    dominant = palette[np.argmax(counts)]
-
-    return dominant
-
 
 def main():
     parser = argparse.ArgumentParser(description='Create a mosaic from given images')
-    parser.add_argument('big_image_path', help='the image path which should be drawn with mosaics')
+    parser.add_argument('input_image_path', help='the image path which should be drawn with mosaics')
+    parser.add_argument('output_image_path', help='the path of the output image')
     parser.add_argument('image_pool', help='directory with images used as single mosaics')
     parser.add_argument('mosaic_size', type=int,  help='the size in pixel of a single mosaic')
+    parser.add_argument('--threads', '-t', default=4, type=int, help='Number of threads')
 
     args = parser.parse_args()
 
